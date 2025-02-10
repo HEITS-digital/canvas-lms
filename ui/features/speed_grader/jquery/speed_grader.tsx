@@ -1147,10 +1147,30 @@ function initRubricStuff() {
     .find('.edit')
     .text(I18n.t('edit_view_rubric', 'View Rubric'))
 
+  $(".superspeed_grader").text("Super Speed Grader");
+
   $('.toggle_full_rubric, .hide_rubric_link').click(e => {
     e.preventDefault()
     EG.toggleFullRubric()
   })
+
+  $(".superspeed_grader").click((e) => {
+    let canvasToken = "";
+    showSpinner();
+    getToken(function (accessToken) {
+      getRubric(ENV.course_id, window.jsonData.rubric_association.rubric_id, canvasToken, function (rubric) {
+          let rubricSlim = transformRubricData(rubric.data);
+          getAssignment(ENV.course_id, EG.currentStudent.submission.assignment_id, canvasToken, function (assignment) {
+              getSubmission(ENV.course_id, EG.currentStudent.submission.assignment_id, EG.currentStudent.submission.user_id, canvasToken, function (submission) {
+                  getGrades(rubricSlim, submission, assignment, accessToken);
+                },
+              );
+            },
+          );
+        },
+      );
+    });
+  });
 
   $('#rubric_assessments_select').on('change', () => {
     handleSelectedRubricAssessmentChanged()
@@ -1195,6 +1215,211 @@ function initGroupAssignmentMode() {
   if (window.jsonData.GROUP_GRADING_MODE) {
     gradeeLabel = groupLabel
   }
+}
+
+function getToken(callback: (data: any) => void) {
+  $.post(
+    "http://superspeed-grader-alb-1468996968.us-east-1.elb.amazonaws.com/token/",
+    {
+      username: "",
+      password: "",
+    },
+    function (response) {
+      callback(response.access_token);
+    },
+  );
+}
+
+function getRubric(courseId: any, rubricId: any, token: any, callback: (data: any) => void) {
+  $.get({
+    url: `http://canvas.docker/api/v1/courses/${courseId}/rubrics/${rubricId}`,
+    contentType: "application/json",
+    beforeSend: function (xhr: any) {
+      xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    },
+    success: function (response: any) {
+      callback(response);
+    },
+    error: function (response: any) {
+      console.log("Error: ", response);
+      callback(response);
+    },
+  });
+}
+
+function getAssignment(courseId: any, assignmentId: any, token: any, callback: (data: any) => void) {
+  $.get({
+    url: `http://canvas.docker/api/v1/courses/${courseId}/assignments/${assignmentId}`,
+    contentType: "application/json",
+    beforeSend: function (xhr: any) {
+      xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    },
+    success: function (response: any) {
+      if (response.description) {
+        const cleanText = response.description.replace(/<\/?[^>]+(>|$)/g, "");
+        callback(cleanText);
+      } else {
+        callback("No description found");
+      }
+    },
+    error: function (response: any) {
+      callback("No description found");
+    },
+  });
+}
+
+function getSubmission(courseId: any, assignmentId: any, user_id: any, token: any, callback: (data: any) => void) {
+  $.get({
+    url: `http://canvas.docker/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions/${user_id}`,
+    contentType: "application/json",
+    beforeSend: function (xhr: any) {
+      xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    },
+    success: function (response: any) {
+      if (response.body) {
+        const cleanText = response.body.replace(/<\/?[^>]+(>|$)/g, "");
+        callback(cleanText);
+      } else {
+        callback("No body found");
+      }
+    },
+    error: function (response: any) {
+      callback("No body found");
+    },
+  });
+}
+
+function getGrades(rubric: any, essay: any, assignment: any, accessToken: any) {
+  $.post({
+    url: "http://superspeed-grader-alb-1468996968.us-east-1.elb.amazonaws.com/grader/",
+    contentType: "application/json",
+    data: JSON.stringify({
+      model_type: "claude3-haiku",
+      essay: essay,
+      assignment: assignment,
+      rubric: rubric,
+    }),
+    beforeSend: function (xhr: any) {
+      xhr.setRequestHeader("Authorization", `Bearer ${accessToken}`);
+    },
+    success: function (graderResponse: any) {
+      EG.toggleFullRubric();
+      $("#grading-box-extended").val(graderResponse["total_points"]);
+
+      for (let index = 0; index < graderResponse.result.length; ++index) {
+        let item = graderResponse.result[index];
+
+        $("tr").each(function () {
+          let criterionText = $(this).find("th .description span").text().trim();
+
+          if (criterionText === item["rubric_category"]) {
+            let points = item["points"] + " pts";
+            let targetDiv = $(this).find("div.rating-points span")
+              .filter(function () {
+                return $(this).text().trim() === points;
+              }).closest("div.rating-tier");
+
+            if (targetDiv.length > 0) {
+              targetDiv[0].click();
+            } else {
+              console.warn("Rating not found:", points);
+            }
+
+            let button = $(this).find("td[data-testid='criterion-points'] button");
+
+            if (button.length > 0) {
+              button[0].click();
+              setTimeout(() => {
+                let textarea = $(this).find("textarea[data-selenium='criterion_comments_text']");
+                if (textarea.length > 0) {
+                  textarea.val(item["reasoning"]).trigger("input").trigger("change");
+                }
+              }, 500);
+            }
+          }
+        });
+      }
+      hideSpinner()
+    },
+    error: function (xhr: any, status: any, error: any) {
+      console.log("Error in Grader Request:", error);
+    },
+  });
+}
+
+function showSpinner() {
+  let spinnerOverlay = $('<div id="loading-spinner"></div>');
+
+  spinnerOverlay.css({
+    position: "fixed",
+    top: "0",
+    left: "0",
+    width: "100vw",
+    height: "100vh",
+    background: "rgba(255, 255, 255, 0.9)",
+    display: "flex",
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 99999,
+    cursor: "not-allowed",
+  });
+
+  let spinner = $('<div class="spinner"></div>');
+
+  spinner.css({
+    width: "50px",
+    height: "50px",
+    border: "6px solid rgba(0, 0, 255, 0.2)",
+    borderTop: "6px solid #0066cc",
+    borderRadius: "50%",
+    animation: "spin 1s linear infinite",
+  });
+
+  spinnerOverlay.append(spinner);
+  $("body").append(spinnerOverlay);
+  $("body").css("pointer-events", "none");
+  $("<style>").prop("type", "text/css").html("@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }",).appendTo("head");
+}
+
+function hideSpinner() {
+  $("#loading-spinner").remove();
+  $("body").css("pointer-events", "auto");
+}
+
+type Rating = {
+  description: string;
+  long_description: string;
+  points: number;
+};
+
+type Criterion = {
+  description: string;
+  points: number;
+  ratings: Rating[];
+};
+
+type TransformedRubric = {
+  [key: string]: {
+    Criteria: {
+      Description: string;
+      Points: number;
+    }[];
+    MaximumPoints: number;
+  };
+};
+
+function transformRubricData(rubricData: Criterion[]): TransformedRubric {
+  return rubricData.reduce((acc, criterion) => {
+    const key = criterion.description;
+    acc[key] = {
+      Criteria: criterion.ratings.map((rating) => ({
+        Description: rating.long_description,
+        Points: rating.points,
+      })),
+      MaximumPoints: criterion.points,
+    };
+    return acc;
+  }, {} as TransformedRubric);
 }
 
 function refreshGrades(
