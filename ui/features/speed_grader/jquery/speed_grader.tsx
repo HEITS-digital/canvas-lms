@@ -1227,7 +1227,10 @@ function getToken(callback: (data: any) => void) {
     function (response) {
       callback(response.access_token);
     },
-  );
+  ).fail(function(jqXHR: any, textStatus: any, errorThrown: any) {
+      console.error("Error fetching token:", textStatus, errorThrown)
+      hideSpinner()
+    });
 }
 
 function getRubric(courseId: any, rubricId: any, token: any, callback: (data: any) => void) {
@@ -1241,8 +1244,7 @@ function getRubric(courseId: any, rubricId: any, token: any, callback: (data: an
       callback(response);
     },
     error: function (response: any) {
-      console.log("Error: ", response);
-      callback(response);
+      hideSpinner()
     },
   });
 }
@@ -1263,7 +1265,7 @@ function getAssignment(courseId: any, assignmentId: any, token: any, callback: (
       }
     },
     error: function (response: any) {
-      callback("No description found");
+      hideSpinner()
     },
   });
 }
@@ -1284,7 +1286,7 @@ function getSubmission(courseId: any, assignmentId: any, user_id: any, token: an
       }
     },
     error: function (response: any) {
-      callback("No body found");
+      hideSpinner()
     },
   });
 }
@@ -1342,7 +1344,7 @@ function getGrades(rubric: any, essay: any, assignment: any, accessToken: any) {
       hideSpinner()
     },
     error: function (xhr: any, status: any, error: any) {
-      console.log("Error in Grader Request:", error);
+      hideSpinner()
     },
   });
 }
